@@ -1,5 +1,4 @@
 import nodemailer from 'nodemailer'
-import { logger } from './logger'
 
 interface SendEmailOptions {
     to: string | string[]
@@ -22,44 +21,25 @@ class EmailService {
     /**
      * Get transporter on demand (lazy initialization)
      * This ensures environment variables are loaded before creating the transporter
+     * MATCHING JS LOGIC: Prioritize 'service' mode over 'host' mode
      */
     private getTransporter(): nodemailer.Transporter {
-        // Support both service-based (Gmail) and SMTP configurations
-        const emailService = process.env.EMAIL_SERVICE
-        const emailHost = process.env.EMAIL_HOST
-        const emailPort = process.env.EMAIL_PORT ? parseInt(process.env.EMAIL_PORT) : undefined
-        const emailSecure = process.env.EMAIL_SECURE === 'true' || process.env.EMAIL_SECURE === '1'
+        // Log environment status for debugging (checking if vars exist)
+        console.log('DEBUG: Creating Transporter. User:', process.env.EMAIL_USER ? 'Set' : 'Missing');
         
-        // If EMAIL_HOST is provided, use SMTP configuration (for production)
-        if (emailHost) {
-            return nodemailer.createTransport({
-                host: emailHost,
-                port: emailPort || (emailSecure ? 465 : 587),
-                secure: emailSecure,
-                auth: {
-                    user: process.env.EMAIL_USER,
-                    pass: process.env.EMAIL_PASSWORD,
-                },
-                // Add timeout and connection options for production
-                connectionTimeout: 10000,
-                greetingTimeout: 10000,
-                socketTimeout: 10000,
-            })
-        } else {
-            // Use service-based configuration (Gmail, etc.)
-            // Simplified to use only EMAIL_USER, EMAIL_PASSWORD, EMAIL_FROM_NAME
-            return nodemailer.createTransport({
-                service: emailService || 'gmail',
-                auth: {
-                    user: process.env.EMAIL_USER,
-                    pass: process.env.EMAIL_PASSWORD,
-                },
-                // Add timeout and connection options for production
-                connectionTimeout: 10000,
-                greetingTimeout: 10000,
-                socketTimeout: 10000,
-            })
-        }
+        // MATCHING JS LOGIC: Prioritize 'service' mode over 'host' mode
+        // The previous TS code prioritized Host, which might be breaking if live env has junk vars.
+        return nodemailer.createTransport({
+            service: process.env.EMAIL_SERVICE || 'gmail',
+            auth: {
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASSWORD,
+            },
+            // Add timeout and connection options for production
+            connectionTimeout: 10000,
+            greetingTimeout: 10000,
+            socketTimeout: 10000,
+        });
     }
 
     /**
@@ -67,14 +47,15 @@ class EmailService {
      */
     async sendEmail({ to, subject, html, text }: SendEmailOptions): Promise<boolean> {
         try {
+            // Check vars immediately before sending
             if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-                logger.warn('Email service not configured. Skipping email sending.')
-                return false
+                console.warn('⚠️ Email service not configured: Missing EMAIL_USER or EMAIL_PASSWORD');
+                return false;
             }
 
             // Create transporter on demand (lazy initialization)
             // This ensures environment variables are loaded before creating the transporter
-            const transporter = this.getTransporter()
+            const transporter = this.getTransporter();
 
             const info = await transporter.sendMail({
                 from: `"${process.env.EMAIL_FROM_NAME || 'Project Management'}" <${process.env.EMAIL_USER}>`,
@@ -82,13 +63,16 @@ class EmailService {
                 subject,
                 html,
                 text: text || html.replace(/<[^>]*>/g, ''), // Basic fallback
-            })
+            });
 
-            logger.info(`Email sent: ${info.messageId}`)
-            return true
+            console.log(`✅ Email sent successfully: ${info.messageId}`);
+            return true;
         } catch (error) {
-            logger.error('Error sending email:', error)
-            return false
+            // MATCHING JS LOGIC: Use console.error instead of custom logger
+            console.error('❌ Error sending email:', error);
+            // Optional: Throw error if you want the controller to catch it
+            // throw error; 
+            return false;
         }
     }
 
@@ -242,7 +226,7 @@ class EmailService {
                                     <td style="padding: 16px 20px;">
                                         <p style="margin: 0; font-size: 14px; color: #92400e; line-height: 1.6;">
                                             <strong>Security Tip:</strong> Please change your password after your first login to keep your account secure.
-                                        </p>
+            </p>
                                     </td>
                                 </tr>
                             </table>

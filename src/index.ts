@@ -21,17 +21,21 @@ const PORT = process.env.PORT || 3001
 // Support multiple origins in production (comma-separated)
 // Set FRONTEND_URL environment variable with comma-separated URLs:
 // Development: FRONTEND_URL=http://localhost:3000
-// Production: FRONTEND_URL=https://project-manegnent.vercel.app
-// Multiple: FRONTEND_URL=https://project-manegnent.vercel.app,http://localhost:3000
+// Production: FRONTEND_URL=https://p2-project-management.vercel.app
+// Multiple: FRONTEND_URL=https://p2-project-management.vercel.app,http://localhost:3000
+// Note: URLs are normalized to remove trailing slashes to match browser origin format
 const getCorsOrigins = (): string | string[] => {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000'
   
+  // Normalize function to remove trailing slashes (browsers send origins without trailing slashes)
+  const normalizeUrl = (url: string): string => url.trim().replace(/\/+$/, '')
+  
   // If multiple origins are provided (comma-separated), split them
   if (frontendUrl.includes(',')) {
-    return frontendUrl.split(',').map(url => url.trim()).filter(url => url.length > 0)
+    return frontendUrl.split(',').map(normalizeUrl).filter(url => url.length > 0)
   }
   
-  return frontendUrl
+  return normalizeUrl(frontendUrl)
 }
 
 app.use(cors({

@@ -17,9 +17,13 @@ interface InvitationOptions {
 }
 
 class EmailService {
-    private transporter: nodemailer.Transporter
+    // Remove transporter property - will be created on demand
 
-    constructor() {
+    /**
+     * Get transporter on demand (lazy initialization)
+     * This ensures environment variables are loaded before creating the transporter
+     */
+    private getTransporter(): nodemailer.Transporter {
         // Support both service-based (Gmail) and SMTP configurations
         const emailService = process.env.EMAIL_SERVICE
         const emailHost = process.env.EMAIL_HOST
@@ -28,7 +32,7 @@ class EmailService {
         
         // If EMAIL_HOST is provided, use SMTP configuration (for production)
         if (emailHost) {
-            this.transporter = nodemailer.createTransport({
+            return nodemailer.createTransport({
                 host: emailHost,
                 port: emailPort || (emailSecure ? 465 : 587),
                 secure: emailSecure,
@@ -43,12 +47,17 @@ class EmailService {
             })
         } else {
             // Use service-based configuration (Gmail, etc.)
-            this.transporter = nodemailer.createTransport({
+            // Simplified to use only EMAIL_USER, EMAIL_PASSWORD, EMAIL_FROM_NAME
+            return nodemailer.createTransport({
                 service: emailService || 'gmail',
                 auth: {
                     user: process.env.EMAIL_USER,
                     pass: process.env.EMAIL_PASSWORD,
                 },
+                // Add timeout and connection options for production
+                connectionTimeout: 10000,
+                greetingTimeout: 10000,
+                socketTimeout: 10000,
             })
         }
     }
@@ -63,7 +72,11 @@ class EmailService {
                 return false
             }
 
-            const info = await this.transporter.sendMail({
+            // Create transporter on demand (lazy initialization)
+            // This ensures environment variables are loaded before creating the transporter
+            const transporter = this.getTransporter()
+
+            const info = await transporter.sendMail({
                 from: `"${process.env.EMAIL_FROM_NAME || 'Project Management'}" <${process.env.EMAIL_USER}>`,
                 to,
                 subject,

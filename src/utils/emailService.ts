@@ -60,7 +60,7 @@ class EmailService {
      */
     async sendInvitation({ email, name, password, role, loginUrl }: InvitationOptions): Promise<boolean> {
         const url = loginUrl || process.env.FRONTEND_URL || 'http://localhost:3000'
-        const subject = 'Position2 Project Management Invitation'
+        const subject = 'Position<sup>2</sup> Project Management Invitation'
 
         // IMPORTANT: Replace this with a base64-encoded PNG version of your logo
         // Steps to convert:
@@ -87,7 +87,7 @@ class EmailService {
     <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <title>Position2 Project Management Invitation</title>
+    <title>Position<sup>2</sup> Project Management Invitation</title>
     <!--[if mso]>
     <style type="text/css">
         body, table, td {font-family: Arial, sans-serif !important;}
@@ -113,8 +113,8 @@ class EmailService {
                                 </tr>
                                 <tr>
                                     <td align="center">
-                                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111827; letter-spacing: -0.5px;">Position2 Invitation</h1>
-                                        <p style="margin: 8px 0 0; font-size: 16px; color: #6b7280; font-weight: 400;">Position2 Project Management Invitation</p>
+                                        <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #111827; letter-spacing: -0.5px;">Position<sup>2</sup> Invitation</h1>
+                                        <p style="margin: 8px 0 0; font-size: 16px; color: #6b7280; font-weight: 400;">Position<sup>2</sup> Project Management Invitation</p>
                                     </td>
                                 </tr>
                             </table>
@@ -129,7 +129,7 @@ class EmailService {
                                 <tr>
                                     <td style="padding-bottom: 24px;">
                                         <p style="margin: 0 0 12px; font-size: 18px; font-weight: 600; color: #111827; line-height: 1.5;">Hello ${name},</p>
-                                        <p style="margin: 0 0 20px; font-size: 15px; color: #4b5563; line-height: 1.7;">You have been invited to join the Position2 Project Management System. Your account has been created with the following credentials:</p>
+                                        <p style="margin: 0 0 20px; font-size: 15px; color: #4b5563; line-height: 1.7;">You have been invited to join the Position<sup>2</sup> Project Management System. Your account has been created with the following credentials:</p>
                                     </td>
                                 </tr>
                                 <tr>
@@ -218,13 +218,13 @@ class EmailService {
                                 <tr>
                                     <td align="center">
                                         <p style="margin: 0 0 8px; font-size: 12px; color: #6b7280; line-height: 1.6;">
-                                            &copy; ${new Date().getFullYear()} Position2 Inc. All rights reserved.
+                                            &copy; ${new Date().getFullYear()} Position<sup>2</sup> Inc. All rights reserved.
                                         </p>
                                         <p style="margin: 0 0 8px; font-size: 12px; color: #6b7280; line-height: 1.6;">
             This is an automated message. Please do not reply to this email.
                                         </p>
                                         <p style="margin: 0; font-size: 12px; line-height: 1.6;">
-                                            <a href="${url}" style="color: #245E98; text-decoration: none;">Visit Position2 Project Management</a>
+                                            <a href="${url}" style="color: #245E98; text-decoration: none;">Visit Position<sup>2</sup> Project Management</a>
                                         </p>
                                     </td>
                                 </tr>

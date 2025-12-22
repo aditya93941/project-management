@@ -1,9 +1,14 @@
 import { Request, Response, NextFunction } from 'express'
 import { ZodSchema } from 'zod'
+import { sanitizeObject } from '../utils/sanitize'
 
 export const validate = (schema: ZodSchema) => {
   return (req: Request, res: Response, next: NextFunction) => {
     try {
+      // Sanitize input before validation
+      if (req.body && typeof req.body === 'object') {
+        req.body = sanitizeObject(req.body)
+      }
       schema.parse(req.body)
       next()
     } catch (error: any) {

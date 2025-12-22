@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken'
 import { User } from '../models'
 import { generateId } from '../utils/generateId'
 import { loginSchema, registerSchema } from '../schemas'
+import { logger } from '../utils/logger'
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -35,12 +36,15 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
     // Validate JWT_SECRET is set
     const jwtSecret = process.env.JWT_SECRET
-    if (!jwtSecret || jwtSecret === 'secret') {
-      console.error('ERROR: JWT_SECRET is not set or using default value. This is a security risk!')
+    if (!jwtSecret || jwtSecret === 'secret' || jwtSecret.length < 32) {
+      const errorMsg = 'JWT_SECRET is not properly configured. Must be at least 32 characters long.'
+      logger.error(errorMsg)
       if (process.env.NODE_ENV === 'production') {
         res.status(500).json({ message: 'Server configuration error' })
         return
       }
+      res.status(500).json({ message: errorMsg })
+      return
     }
 
     // Generate token with user role
@@ -49,7 +53,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
         userId: user._id,
         role: user.role 
       }, 
-      jwtSecret || 'secret', 
+      jwtSecret, 
       {
         expiresIn: '7d',
       }
@@ -86,13 +90,22 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       return
     }
 
+    // Validate JWT_SECRET
+    const jwtSecret = process.env.JWT_SECRET
+    if (!jwtSecret || jwtSecret === 'secret' || jwtSecret.length < 32) {
+      const errorMsg = 'JWT_SECRET is not properly configured. Must be at least 32 characters long.'
+      logger.error(errorMsg)
+      res.status(500).json({ message: 'Server configuration error' })
+      return
+    }
+
     // Generate token with user role
     const token = jwt.sign(
       { 
         userId: user._id,
         role: user.role 
       }, 
-      process.env.JWT_SECRET || 'secret', 
+      jwtSecret, 
       {
         expiresIn: '7d',
       }
@@ -116,14 +129,14 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     
     // Handle database connection errors
     if (error.message?.includes('connection') || error.message?.includes('SSL')) {
-      console.error('Database connection error during login:', error)
+      logger.error('Database connection error during login:', error)
       res.status(500).json({ 
         message: 'Database connection error. Please try again later.' 
       })
       return
     }
     
-    console.error('Login error:', error)
+    logger.error('Login error:', error)
     res.status(400).json({ message: error.message || 'Login failed' })
   }
 }

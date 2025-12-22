@@ -2,9 +2,9 @@ import { z } from 'zod'
 
 export const createUserSchema = z.object({
   email: z.string().email('Invalid email address'),
-  name: z.string().min(1, 'Name is required'),
-  image: z.string().url().optional(),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  name: z.string().optional(),
+  image: z.string().optional(),
+  password: z.union([z.string().min(6, 'Password must be at least 6 characters'), z.literal('')]).optional(),
   role: z.enum(['MANAGER', 'GROUP_HEAD', 'TEAM_LEAD', 'DEVELOPER']).optional().default('DEVELOPER'),
   localCreatedAt: z.string().optional(),
 })

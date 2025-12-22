@@ -70,9 +70,13 @@ const TaskSchema = new Schema<ITask>(
   }
 )
 
-TaskSchema.index({ projectId: 1 })
-TaskSchema.index({ assigneeId: 1 })
+// Indexes for better query performance
+TaskSchema.index({ projectId: 1, status: 1 }) // Common query: tasks by project and status
+TaskSchema.index({ assigneeId: 1, status: 1 }) // Common query: tasks by assignee and status
+TaskSchema.index({ projectId: 1, assigneeId: 1 }) // Common query: tasks by project and assignee
 TaskSchema.index({ due_date: 1 })
+TaskSchema.index({ createdAt: -1 }) // For sorting by creation date
+TaskSchema.index({ status: 1 }) // For filtering by status
 
 export const Task = mongoose.model<ITask>('Task', TaskSchema)
 

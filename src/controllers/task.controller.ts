@@ -6,6 +6,8 @@ import { AuthRequest } from '../middleware/auth.middleware'
 import { canAssignTaskToUser } from '../utils/permissionChecker'
 import { getAccessibleProjectIds, hasProjectAccess } from '../utils/projectAccess'
 import { UserRole } from '../models/User.model'
+import { updateProjectProgress } from '../utils/calculateProjectProgress'
+import { logger } from '../utils/logger'
 
 export const getTasks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -117,13 +119,6 @@ export const getTaskById = async (req: AuthRequest, res: Response): Promise<void
 
     // Get projectId from raw document (before population)
     const projectId = String(taskRaw.projectId)
-    
-    console.log('[getTaskById] Access check:', {
-      taskId: id,
-      projectId,
-      userId,
-      userRole
-    })
 
     // Now get the task with population for the response
     const task = await Task.findById(id)
@@ -143,11 +138,9 @@ export const getTaskById = async (req: AuthRequest, res: Response): Promise<void
       const project = await Project.findOne({ _id: projectId })
       const membership = await ProjectMember.findOne({ projectId, userId })
       hasAccess = !!membership || project?.team_lead.toString() === userId
-      console.log('[getTaskById] TEAM_LEAD access:', { hasAccess, isMember: !!membership, isTeamLead: project?.team_lead.toString() === userId })
     } else {
       const accessCheck = await hasProjectAccess(userId, userRole, projectId)
       hasAccess = accessCheck.hasAccess
-      console.log('[getTaskById] DEVELOPER access:', { hasAccess, reason: accessCheck.reason })
     }
 
     if (!hasAccess) {
@@ -221,9 +214,14 @@ export const createTask = async (req: AuthRequest, res: Response): Promise<void>
           relatedId: taskId,
         })
       } catch (err) {
-        console.error('Failed to create notification', err)
+        logger.error('Failed to create notification', err)
       }
     }
+
+    // Update project progress after task creation
+    await updateProjectProgress(data.projectId).catch(err => {
+      logger.error('Failed to update project progress:', err)
+    })
 
     res.status(201).json(populated)
   } catch (error: any) {
@@ -297,6 +295,14 @@ export const updateTask = async (req: AuthRequest, res: Response): Promise<void>
       .populate('projectId', 'name')
       .populate('assigneeId', 'name email image')
 
+    // Update project progress after task update (status change affects progress)
+    if (task && data.status !== undefined) {
+      const projectIdToUpdate = existingTask.projectId.toString()
+      await updateProjectProgress(projectIdToUpdate).catch(err => {
+        logger.error('Failed to update project progress:', err)
+      })
+    }
+
     res.json(task)
   } catch (error: any) {
     res.status(400).json({ message: error.message })
@@ -306,12 +312,21 @@ export const updateTask = async (req: AuthRequest, res: Response): Promise<void>
 export const deleteTask = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = taskParamsSchema.parse(req.params)
-    const task = await Task.findByIdAndDelete(id)
+    const task = await Task.findById(id)
     if (!task) {
       res.status(404).json({ message: 'Task not found' })
       return
     }
+    
+    const projectId = task.projectId.toString()
+    await Task.findByIdAndDelete(id)
     await import('../models').then((m) => m.Comment.deleteMany({ taskId: id }))
+    
+    // Update project progress after task deletion
+    await updateProjectProgress(projectId).catch(err => {
+      logger.error('Failed to update project progress:', err)
+    })
+    
     res.json({ message: 'Task deleted successfully' })
   } catch (error: any) {
     res.status(400).json({ message: error.message })

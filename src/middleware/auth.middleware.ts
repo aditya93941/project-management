@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import { User } from '../models'
+import { logger } from '../utils/logger'
 
 export interface AuthRequest extends Request {
   userId?: string
@@ -21,15 +22,19 @@ export const authenticate = async (
     }
 
     const jwtSecret = process.env.JWT_SECRET
-    if (!jwtSecret || jwtSecret === 'secret') {
-      console.error('ERROR: JWT_SECRET is not set or using default value. This is a security risk!')
+    if (!jwtSecret || jwtSecret === 'secret' || jwtSecret.length < 32) {
+      const errorMsg = 'JWT_SECRET is not properly configured. Must be at least 32 characters long.'
+      logger.error(errorMsg)
       if (process.env.NODE_ENV === 'production') {
         res.status(500).json({ message: 'Server configuration error' })
         return
       }
+      // In development, still throw error to prevent using insecure secret
+      res.status(500).json({ message: errorMsg })
+      return
     }
 
-    const decoded = jwt.verify(token, jwtSecret || 'secret') as {
+    const decoded = jwt.verify(token, jwtSecret) as {
       userId: string
       exp?: number
     }
@@ -66,13 +71,13 @@ export const authenticate = async (
         error.message?.includes('network') ||
         error.name === 'MongoNetworkError' ||
         error.name === 'MongoServerError') {
-      console.error('Database error during authentication:', error)
+      logger.error('Database error during authentication:', error)
       res.status(500).json({ message: 'Database connection error. Please try again later.' })
       return
     }
     
     // For other errors, log them and return generic auth failure
-    console.error('Authentication error:', error)
+    logger.error('Authentication error:', error)
     res.status(401).json({ message: 'Authentication failed' })
   }
 }

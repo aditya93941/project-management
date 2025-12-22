@@ -62,7 +62,12 @@ const ProjectSchema = new Schema<IProject>(
   }
 )
 
+// Indexes for better query performance
 ProjectSchema.index({ team_lead: 1 })
+ProjectSchema.index({ status: 1 }) // For filtering by status
+ProjectSchema.index({ priority: 1 }) // For filtering by priority
+ProjectSchema.index({ createdAt: -1 }) // For sorting by creation date
+ProjectSchema.index({ team_lead: 1, status: 1 }) // Common query: projects by team lead and status
 
 export const Project = mongoose.model<IProject>('Project', ProjectSchema)
 

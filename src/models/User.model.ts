@@ -61,7 +61,10 @@ const UserSchema = new Schema<IUser>(
   }
 )
 
-// Note: email index is automatically created by unique: true, no need for separate index
+// Note: email index is automatically created by unique: true
+// Additional indexes for better query performance
+UserSchema.index({ role: 1 }) // For filtering by role
+UserSchema.index({ createdAt: -1 }) // For sorting by creation date
 
 export const User = mongoose.model<IUser>('User', UserSchema)
 

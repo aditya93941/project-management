@@ -27,8 +27,9 @@ router.get('/:id', validateParams(userParamsSchema), getUserById)
 // Only MANAGER and GROUP_HEAD can create users
 router.post('/', authorizeMinimum(UserRole.GROUP_HEAD), validate(createUserSchema), createUser)
 
-// Only MANAGER and GROUP_HEAD can update users
-router.put('/:id', authorizeMinimum(UserRole.GROUP_HEAD), validateParams(userParamsSchema), validate(updateUserSchema), updateUser)
+// Users can update their own profile, or GROUP_HEAD+ can update any user
+// Note: Authorization is handled inside the controller to allow self-updates
+router.put('/:id', validateParams(userParamsSchema), validate(updateUserSchema), updateUser)
 
 // Only MANAGER can delete users
 router.delete('/:id', authorize(UserRole.MANAGER), validateParams(userParamsSchema), deleteUser)

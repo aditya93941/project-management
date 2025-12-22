@@ -10,6 +10,7 @@ import {
 import { AuthRequest } from '../middleware/auth.middleware'
 import { hasProjectAccess, getAccessibleProjectIds } from '../utils/projectAccess'
 import { UserRole } from '../models/User.model'
+import { logger } from '../utils/logger'
 
 export const getProjects = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -31,15 +32,9 @@ export const getProjects = async (req: AuthRequest, res: Response): Promise<void
     if (userRole === UserRole.DEVELOPER) {
       // DEVELOPER: Only projects they are a member of
       const accessibleProjectIds = await getAccessibleProjectIds(userId, userRole)
-      console.log('[getProjects] DEVELOPER accessible projects:', {
-        userId,
-        accessibleProjectIds,
-        count: accessibleProjectIds?.length || 0
-      })
       
       if (accessibleProjectIds === null || accessibleProjectIds.length === 0) {
         // No accessible projects
-        console.log('[getProjects] No accessible projects for DEVELOPER')
         res.json({
           data: [],
           total: 0,
@@ -54,8 +49,6 @@ export const getProjects = async (req: AuthRequest, res: Response): Promise<void
         .map(id => String(id).trim())
         .filter(id => id && id.length > 0)
         .filter((id, index, arr) => arr.indexOf(id) === index) // Remove duplicates
-      
-      console.log('[getProjects] DEVELOPER normalized project IDs for filter:', normalizedProjectIds)
       
       if (normalizedProjectIds.length === 0) {
         res.json({
@@ -73,12 +66,6 @@ export const getProjects = async (req: AuthRequest, res: Response): Promise<void
       const memberProjectIds = await getAccessibleProjectIds(userId, userRole)
       const teamLeadProjectIds = await Project.find({ team_lead: userId }).distinct('_id')
       
-      console.log('[getProjects] TEAM_LEAD accessible projects:', {
-        userId,
-        memberProjectIds,
-        teamLeadProjectIds: teamLeadProjectIds.map(id => id.toString())
-      })
-      
       // Combine member and team_lead project IDs
       const allAccessibleIds = [
         ...(memberProjectIds || []).map(id => String(id)),
@@ -87,8 +74,6 @@ export const getProjects = async (req: AuthRequest, res: Response): Promise<void
       
       // Remove duplicates
       const uniqueIds = [...new Set(allAccessibleIds)]
-      
-      console.log('[getProjects] TEAM_LEAD unique accessible projects:', uniqueIds)
       
       if (uniqueIds.length === 0) {
         res.json({
@@ -103,9 +88,6 @@ export const getProjects = async (req: AuthRequest, res: Response): Promise<void
     }
     // MANAGER and GROUP_HEAD: No filter (can see all projects)
 
-    console.log('[getProjects] Query filter:', JSON.stringify(filter, null, 2))
-    console.log('[getProjects] Pagination:', { page, limit, skip })
-
     const projects = await Project.find(filter)
       .populate('team_lead', 'name email image')
       .skip(skip)
@@ -113,16 +95,6 @@ export const getProjects = async (req: AuthRequest, res: Response): Promise<void
       .sort({ createdAt: -1 })
 
     const total = await Project.countDocuments(filter)
-    
-    console.log('[getProjects] Query results:', {
-      userId,
-      userRole,
-      projectsFound: projects.length,
-      total,
-      projectIds: projects.map(p => p._id),
-      hasFilter: !!filter._id,
-      filterIds: filter._id?.$in || 'none'
-    })
 
     // Optionally include members and tasks for each project
     const projectsWithRelations = await Promise.all(
@@ -162,8 +134,6 @@ export const getProjectById = async (req: AuthRequest, res: Response): Promise<v
     const { id } = projectParamsSchema.parse(req.params)
     const userId = req.userId!
     const userRole = req.user?.role as UserRole
-
-    console.log('[getProjectById] Looking for project with ID:', id)
 
     // Use findOne with _id instead of findById for custom string IDs
     const project = await Project.findOne({ _id: id })
@@ -209,7 +179,7 @@ export const getProjectById = async (req: AuthRequest, res: Response): Promise<v
       tasks,
     })
   } catch (error: any) {
-    console.error('[getProjectById] Error:', error)
+    logger.error('[getProjectById] Error:', error)
     res.status(400).json({ message: error.message })
   }
 }
@@ -252,7 +222,7 @@ export const createProject = async (req: AuthRequest, res: Response): Promise<vo
       .populate('team_lead', 'name email image')
     res.status(201).json(populated)
   } catch (error: any) {
-    console.error('Create project error:', error)
+    logger.error('Create project error:', error)
     if (error.name === 'ZodError') {
       res.status(400).json({
         message: 'Validation error',
@@ -271,12 +241,9 @@ export const updateProject = async (req: AuthRequest, res: Response): Promise<vo
     const userId = req.userId!
     const userRole = req.user?.role as UserRole
 
-    console.log('[updateProject] Updating project with ID:', id, 'Data:', data)
-
     // Check if project exists first
     const existingProject = await Project.findOne({ _id: id })
     if (!existingProject) {
-      console.log('[updateProject] Project not found with ID:', id)
       res.status(404).json({ message: 'Project not found' })
       return
     }
@@ -300,15 +267,13 @@ export const updateProject = async (req: AuthRequest, res: Response): Promise<vo
       .populate('team_lead', 'name email image')
     
     if (!project) {
-      console.log('[updateProject] Failed to update project')
       res.status(500).json({ message: 'Failed to update project' })
       return
     }
 
-    console.log('[updateProject] Project updated successfully:', project.name)
     res.json(project)
   } catch (error: any) {
-    console.error('[updateProject] Error:', error)
+    logger.error('[updateProject] Error:', error)
     res.status(400).json({ message: error.message })
   }
 }
@@ -344,7 +309,7 @@ export const deleteProject = async (req: AuthRequest, res: Response): Promise<vo
       
       // Delete EODTask records
       const deletedEODTasks = await EODTask.deleteMany({ taskId: { $in: taskIds } })
-      console.log(`[deleteProject] Deleted ${deletedEODTasks.deletedCount} EODTask records for tasks in project ${id}`)
+      logger.log(`[deleteProject] Deleted ${deletedEODTasks.deletedCount} EODTask records for tasks in project ${id}`)
       
       // Update EODReport counts for affected reports (recalculate based on remaining tasks)
       for (const reportId of affectedReportIds) {
@@ -368,7 +333,7 @@ export const deleteProject = async (req: AuthRequest, res: Response): Promise<vo
         const remainingTaskCount = await EODTask.countDocuments({ eodReportId: reportId })
         if (remainingTaskCount === 0) {
           await EODReport.deleteOne({ _id: reportId })
-          console.log(`[deleteProject] Deleted EODReport ${reportId} as it had no remaining tasks after project deletion`)
+          logger.log(`[deleteProject] Deleted EODReport ${reportId} as it had no remaining tasks after project deletion`)
         }
       }
     }
@@ -397,10 +362,10 @@ export const deleteProject = async (req: AuthRequest, res: Response): Promise<vo
     // 8. Finally, delete the project itself
     await Project.findByIdAndDelete(id)
 
-    console.log(`[deleteProject] Successfully deleted project ${id} and all related data`)
+    logger.log(`[deleteProject] Successfully deleted project ${id} and all related data`)
     res.json({ message: 'Project and all related data deleted successfully' })
   } catch (error: any) {
-    console.error('[deleteProject] Error:', error)
+    logger.error('[deleteProject] Error:', error)
     res.status(400).json({ message: error.message })
   }
 }
@@ -455,7 +420,7 @@ export const addProjectMember = async (req: AuthRequest, res: Response): Promise
 
     res.status(201).json(populated)
   } catch (error: any) {
-    console.error('Add project member error:', error)
+    logger.error('Add project member error:', error)
     if (error.name === 'ZodError') {
       res.status(400).json({
         message: 'Validation error',

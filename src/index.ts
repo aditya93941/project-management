@@ -1,8 +1,10 @@
+import 'dotenv/config' // Load env vars before any other imports
 import express from 'express'
 import cors from 'cors'
-import dotenv from 'dotenv'
 import morgan from 'morgan'
 import cron from 'node-cron'
+import helmet from 'helmet'
+import mongoose from 'mongoose'
 import { connectDatabase } from './config/database'
 import routes from './routes'
 import { expirePermissions, checkExpiringPermissions } from './utils/expirePermissions'
@@ -11,11 +13,25 @@ import { generateWeeklySummaries } from './utils/weeklySummaries'
 import { generateMonthlySummaries } from './utils/monthlySummaries'
 import { processScheduledSubmissions, autoSubmitDraftsAtEndOfDay, finalizeReportsAtMidnight } from './utils/eodAutoSubmit'
 import { logger } from './utils/logger'
-
-dotenv.config()
+import { apiRateLimiter } from './middleware/rateLimit.middleware'
 
 const app = express()
 const PORT = process.env.PORT || 3001
+
+// Security headers with Helmet
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+}))
 
 // Middleware - CORS configuration
 // Support multiple origins in production (comma-separated)
@@ -26,15 +42,15 @@ const PORT = process.env.PORT || 3001
 // Note: URLs are normalized to remove trailing slashes to match browser origin format
 const getCorsOrigins = (): string | string[] => {
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000'
-  
+
   // Normalize function to remove trailing slashes (browsers send origins without trailing slashes)
   const normalizeUrl = (url: string): string => url.trim().replace(/\/+$/, '')
-  
+
   // If multiple origins are provided (comma-separated), split them
   if (frontendUrl.includes(',')) {
     return frontendUrl.split(',').map(normalizeUrl).filter(url => url.length > 0)
   }
-  
+
   return normalizeUrl(frontendUrl)
 }
 
@@ -45,6 +61,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control'],
 }))
 
+// Apply rate limiting to all routes
+app.use(apiRateLimiter)
+
 // HTTP request logger - morgan - log full URL including query params
 // Only log in development or if DEBUG is enabled
 if (process.env.NODE_ENV !== 'production' || process.env.DEBUG === 'true') {
@@ -54,9 +73,8 @@ if (process.env.NODE_ENV !== 'production' || process.env.DEBUG === 'true') {
 app.use(express.json())
 app.use(express.urlencoded({ extended: true }))
 
-// Routes - mount at root level (original setup)
-// Frontend components handle /api prefix in their API_URL
-app.use('/', routes)
+// Routes - mount at /api prefix to match frontend API calls
+app.use('/api', routes)
 
 // Health check endpoint with diagnostic information
 app.get('/health', (_req, res) => {
@@ -91,7 +109,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 const validateEnv = () => {
   const errors: string[] = []
   const warnings: string[] = []
-  
+
   // Check JWT_SECRET
   const jwtSecret = process.env.JWT_SECRET
   if (!jwtSecret || jwtSecret === 'secret' || jwtSecret.length < 32) {
@@ -101,24 +119,24 @@ const validateEnv = () => {
       warnings.push('JWT_SECRET is not set or too short. Using default (insecure for production)')
     }
   }
-  
+
   // Check MONGODB_URI
   if (!process.env.MONGODB_URI) {
     errors.push('MONGODB_URI is required')
   } else if (!process.env.MONGODB_URI.startsWith('mongodb://') && !process.env.MONGODB_URI.startsWith('mongodb+srv://')) {
     warnings.push('MONGODB_URI format may be incorrect')
   }
-  
+
   // Check FRONTEND_URL in production
   if (process.env.NODE_ENV === 'production' && !process.env.FRONTEND_URL) {
     warnings.push('FRONTEND_URL is not set. CORS may not work correctly in production')
   }
-  
+
   // Log warnings
   if (warnings.length > 0) {
     warnings.forEach(warning => logger.warn(`⚠️  WARNING: ${warning}`))
   }
-  
+
   // Log errors and exit if in production
   if (errors.length > 0) {
     logger.error('❌ ENVIRONMENT VARIABLE ERRORS:')
@@ -130,10 +148,14 @@ const validateEnv = () => {
   }
 }
 
+// Store server instance and cron tasks for graceful shutdown
+let server: any = null
+const cronTasks: cron.ScheduledTask[] = []
+
 // Start scheduled tasks
 const startScheduledTasks = () => {
   // Run permission expiry check every hour
-  cron.schedule('0 * * * *', async () => {
+  cronTasks.push(cron.schedule('0 * * * *', async () => {
     try {
       const result = await expirePermissions()
       if (result.expiredCount > 0) {
@@ -142,10 +164,10 @@ const startScheduledTasks = () => {
     } catch (error) {
       logger.error('❌ Error in permission expiry cron job:', error)
     }
-  })
+  }))
 
   // Check for expiring permissions daily at 9 AM
-  cron.schedule('0 9 * * *', async () => {
+  cronTasks.push(cron.schedule('0 9 * * *', async () => {
     try {
       const result = await checkExpiringPermissions()
       if (result.notifiedCount > 0) {
@@ -154,10 +176,10 @@ const startScheduledTasks = () => {
     } catch (error) {
       logger.error('❌ Error in expiring permissions check cron job:', error)
     }
-  })
+  }))
 
   // Send EOD reminders daily at 6:30 PM (working days only)
-  cron.schedule('30 18 * * 1-5', async () => {
+  cronTasks.push(cron.schedule('30 18 * * 1-5', async () => {
     try {
       const result = await sendEODReminders()
       if (result.sentCount > 0) {
@@ -166,10 +188,10 @@ const startScheduledTasks = () => {
     } catch (error) {
       logger.error('❌ Error in EOD reminder cron job:', error)
     }
-  })
+  }))
 
   // Generate weekly summaries every Sunday at 11:59 PM
-  cron.schedule('59 23 * * 0', async () => {
+  cronTasks.push(cron.schedule('59 23 * * 0', async () => {
     try {
       const result = await generateWeeklySummaries()
       if (result.generatedCount > 0) {
@@ -178,10 +200,10 @@ const startScheduledTasks = () => {
     } catch (error) {
       logger.error('❌ Error in weekly summary generation cron job:', error)
     }
-  })
+  }))
 
   // Generate monthly summaries on the 1st of each month at 12:00 AM
-  cron.schedule('0 0 1 * *', async () => {
+  cronTasks.push(cron.schedule('0 0 1 * *', async () => {
     try {
       const result = await generateMonthlySummaries()
       if (result.generatedCount > 0) {
@@ -190,34 +212,34 @@ const startScheduledTasks = () => {
     } catch (error) {
       logger.error('❌ Error in monthly summary generation cron job:', error)
     }
-  })
+  }))
 
   // Process scheduled EOD submissions every minute
-  cron.schedule('* * * * *', async () => {
+  cronTasks.push(cron.schedule('* * * * *', async () => {
     try {
       await processScheduledSubmissions()
     } catch (error) {
       logger.error('❌ Error in scheduled EOD submission cron job:', error)
     }
-  })
+  }))
 
   // Auto-submit all drafts at end of day (11:59 PM)
-  cron.schedule('59 23 * * *', async () => {
+  cronTasks.push(cron.schedule('59 23 * * *', async () => {
     try {
       await autoSubmitDraftsAtEndOfDay()
     } catch (error) {
       logger.error('❌ Error in auto-submit drafts cron job:', error)
     }
-  })
+  }))
 
   // Finalize all submitted reports at midnight (00:00:01)
-  cron.schedule('1 0 * * *', async () => {
+  cronTasks.push(cron.schedule('1 0 * * *', async () => {
     try {
       await finalizeReportsAtMidnight()
     } catch (error) {
       logger.error('❌ Error in finalize reports cron job:', error)
     }
-  })
+  }))
 
   logger.log('⏰ Scheduled tasks started:')
   logger.log('  - Permission expiry: hourly')
@@ -230,16 +252,67 @@ const startScheduledTasks = () => {
   logger.log('  - Finalize reports: daily at 12:00:01 AM')
 }
 
+// Graceful shutdown handler
+const gracefulShutdown = async (signal: string) => {
+  logger.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`)
+
+  // Stop all cron jobs
+  cronTasks.forEach(task => {
+    task.stop()
+  })
+  logger.log('✅ All cron jobs stopped')
+
+  // Close server
+  if (server) {
+    return new Promise<void>((resolve) => {
+      server.close(() => {
+        logger.log('✅ HTTP server closed')
+        resolve()
+      })
+
+      // Force close after 10 seconds
+      setTimeout(() => {
+        logger.log('⚠️  Forcing server shutdown after timeout')
+        resolve()
+      }, 10000)
+    }).then(async () => {
+      // Close MongoDB connection
+      try {
+        await mongoose.connection.close()
+        logger.log('✅ MongoDB connection closed')
+      } catch (error) {
+        logger.error('❌ Error closing MongoDB connection:', error)
+      }
+
+      logger.log('👋 Shutdown complete')
+      process.exit(0)
+    })
+  } else {
+    // If server hasn't started yet, just close DB and exit
+    try {
+      await mongoose.connection.close()
+      logger.log('✅ MongoDB connection closed')
+    } catch (error) {
+      logger.error('❌ Error closing MongoDB connection:', error)
+    }
+    process.exit(0)
+  }
+}
+
+// Register shutdown handlers
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
+process.on('SIGINT', () => gracefulShutdown('SIGINT'))
+
 // Start server
 const startServer = async () => {
   try {
     validateEnv()
     await connectDatabase()
-    
+
     // Start scheduled tasks
     startScheduledTasks()
-    
-    app.listen(PORT, () => {
+
+    server = app.listen(PORT, () => {
       logger.log(`🚀 Server running on port ${PORT}`)
       if (process.env.NODE_ENV !== 'production') {
         logger.log(`   Local: http://localhost:${PORT}`)

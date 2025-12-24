@@ -1,13 +1,15 @@
 import { Response } from 'express'
-import { Task, User } from '../models'
+import { Task, User, Project, Notification } from '../models'
 import { generateId } from '../utils/generateId'
 import { createTaskSchema, updateTaskSchema, taskParamsSchema } from '../schemas'
 import { AuthRequest } from '../middleware/auth.middleware'
 import { canAssignTaskToUser } from '../utils/permissionChecker'
 import { getAccessibleProjectIds, hasProjectAccess } from '../utils/projectAccess'
 import { UserRole } from '../models/User.model'
-import { updateProjectProgress } from '../utils/calculateProjectProgress'
+import { updateProjectProgress, updateProjectStatus } from '../utils/calculateProjectProgress'
 import { logger } from '../utils/logger'
+import { ProjectStatus, TaskStatus } from '../types'
+import { markUserViewingTask } from '../utils/taskViewingTracker'
 
 export const getTasks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -218,6 +220,20 @@ export const createTask = async (req: AuthRequest, res: Response): Promise<void>
       }
     }
 
+    // Check and update project status if needed (reactivate if completed/cancelled)
+    try {
+      const project = await Project.findById(data.projectId)
+      if (project && (project.status === ProjectStatus.COMPLETED || project.status === ProjectStatus.CANCELLED)) {
+        // New task added to completed/cancelled project - reactivate it
+        await Project.findByIdAndUpdate(data.projectId, { 
+          status: ProjectStatus.ACTIVE 
+        })
+        logger.log(`[createTask] Reactivated project ${data.projectId} - new task added`)
+      }
+    } catch (err) {
+      logger.error('Failed to update project status:', err)
+    }
+
     // Update project progress after task creation
     await updateProjectProgress(data.projectId).catch(err => {
       logger.error('Failed to update project progress:', err)
@@ -291,6 +307,7 @@ export const updateTask = async (req: AuthRequest, res: Response): Promise<void>
       }
     }
 
+    const oldStatus = existingTask.status
     const task = await Task.findByIdAndUpdate(id, data, { new: true })
       .populate('projectId', 'name')
       .populate('assigneeId', 'name email image')
@@ -301,9 +318,74 @@ export const updateTask = async (req: AuthRequest, res: Response): Promise<void>
       await updateProjectProgress(projectIdToUpdate).catch(err => {
         logger.error('Failed to update project progress:', err)
       })
+      
+      // Update project status (auto-complete if all tasks done, reactivate if incomplete)
+      await updateProjectStatus(projectIdToUpdate).catch(err => {
+        logger.error('Failed to update project status:', err)
+      })
+      
+      // Send notification for status change
+      if (data.status !== oldStatus && task) {
+        try {
+          const recipients = new Set<string>()
+          
+          // Notify task creator
+          if (existingTask.createdById && existingTask.createdById !== req.user?.id) {
+            recipients.add(existingTask.createdById.toString())
+          }
+          
+          // Notify task assignee
+          if (existingTask.assigneeId && existingTask.assigneeId !== req.user?.id) {
+            recipients.add(existingTask.assigneeId.toString())
+          }
+          
+          // Notify project team lead
+          const project = await Project.findById(projectIdToUpdate).select('team_lead')
+          if (project?.team_lead && project.team_lead !== req.user?.id) {
+            recipients.add(project.team_lead.toString())
+          }
+          
+          // Create notifications for all recipients
+          for (const recipientId of recipients) {
+            await Notification.create({
+              _id: generateId(),
+              recipientId,
+              senderId: req.user?.id,
+              taskId: task._id,
+              message: `Task "${task.title || existingTask.title}" status changed from ${oldStatus} to ${data.status}`,
+              type: 'TASK_STATUS_CHANGE',
+              relatedId: task._id,
+            })
+          }
+        } catch (err) {
+          logger.error('Failed to create status change notification:', err)
+        }
+      }
     }
 
     res.json(task)
+  } catch (error: any) {
+    res.status(400).json({ message: error.message })
+  }
+}
+
+/**
+ * Mark user as viewing a task (for notification filtering)
+ */
+export const markTaskViewing = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { id } = taskParamsSchema.parse(req.params)
+    const userId = req.user?.id
+    
+    if (!userId) {
+      res.status(401).json({ message: 'Authentication required' })
+      return
+    }
+    
+    // Mark user as viewing this task
+    markUserViewingTask(id, userId)
+    
+    res.json({ message: 'Viewing status updated' })
   } catch (error: any) {
     res.status(400).json({ message: error.message })
   }
@@ -325,6 +407,11 @@ export const deleteTask = async (req: AuthRequest, res: Response): Promise<void>
     // Update project progress after task deletion
     await updateProjectProgress(projectId).catch(err => {
       logger.error('Failed to update project progress:', err)
+    })
+    
+    // Update project status (might need to reactivate if it was completed)
+    await updateProjectStatus(projectId).catch(err => {
+      logger.error('Failed to update project status:', err)
     })
     
     res.json({ message: 'Task deleted successfully' })

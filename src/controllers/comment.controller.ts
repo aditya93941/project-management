@@ -1,8 +1,9 @@
 import { Response } from 'express'
-import { Comment, Task, Notification } from '../models'
+import { Comment, Task, Notification, Project } from '../models'
 import { generateId } from '../utils/generateId'
 import { createCommentSchema, updateCommentSchema, commentParamsSchema } from '../schemas'
 import { AuthRequest } from '../middleware/auth.middleware'
+import { isUserViewingTask } from '../utils/taskViewingTracker'
 
 export const getComments = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -56,17 +57,68 @@ export const createComment = async (req: AuthRequest, res: Response): Promise<vo
     })
     await comment.save()
 
-    // Create Notification
+    // Create Notifications
     try {
       const task = await Task.findById(data.taskId)
-      // Notify assignee if they are not the commenter
-      if (task && task.assigneeId && task.assigneeId !== req.user?.id) {
+        .populate('projectId', 'name team_lead')
+      
+      if (!task) return
+      
+      const recipients = new Set<string>()
+      
+      // Notify assignee if they are not the commenter and not currently viewing
+      if (task.assigneeId && task.assigneeId !== req.user?.id) {
+        const assigneeId = task.assigneeId.toString()
+        const isViewing = isUserViewingTask(data.taskId, assigneeId)
+        if (!isViewing) {
+          recipients.add(assigneeId)
+        }
+      }
+      
+      // Notify task creator if they are not the commenter and not viewing
+      if (task.createdById && task.createdById !== req.user?.id) {
+        const creatorId = task.createdById.toString()
+        const isViewing = isUserViewingTask(data.taskId, creatorId)
+        if (!isViewing && !recipients.has(creatorId)) {
+          recipients.add(creatorId)
+        }
+      }
+      
+      // Notify project team lead if they are not the commenter and not viewing
+      const project = task.projectId as any
+      if (project?.team_lead && project.team_lead !== req.user?.id) {
+        const teamLeadId = project.team_lead.toString()
+        const isViewing = isUserViewingTask(data.taskId, teamLeadId)
+        if (!isViewing && !recipients.has(teamLeadId)) {
+          recipients.add(teamLeadId)
+        }
+      }
+      
+      // Notify project members who have commented on this task (active participants)
+      const previousComments = await Comment.find({ taskId: data.taskId })
+        .select('userId')
+        .distinct('userId')
+      
+      for (const commenterId of previousComments) {
+        if (commenterId && commenterId.toString() !== req.user?.id) {
+          const commenterIdStr = commenterId.toString()
+          const isViewing = isUserViewingTask(data.taskId, commenterIdStr)
+          if (!isViewing && !recipients.has(commenterIdStr)) {
+            recipients.add(commenterIdStr)
+          }
+        }
+      }
+      
+      // Create notifications for all recipients
+      for (const recipientId of recipients) {
         await Notification.create({
           _id: generateId(),
-          recipientId: task.assigneeId,
+          recipientId,
           senderId: req.user?.id,
           taskId: task._id,
           message: `${req.user?.name || 'Someone'} commented on task "${task.title}"`,
+          type: 'COMMENT',
+          relatedId: task._id,
         })
       }
     } catch (err) {

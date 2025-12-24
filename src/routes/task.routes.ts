@@ -5,6 +5,7 @@ import {
   createTask,
   updateTask,
   deleteTask,
+  markTaskViewing,
 } from '../controllers/task.controller'
 import { authenticate } from '../middleware/auth.middleware'
 import { validate, validateParams } from '../middleware/validate.middleware'
@@ -22,6 +23,7 @@ router.get('/', getTasks)
 router.get('/:id', validateParams(taskParamsSchema), getTaskById)
 router.post('/', validate(createTaskSchema), createTask)
 router.put('/:id', validateParams(taskParamsSchema), validate(updateTaskSchema), updateTask)
+router.post('/:id/viewing', validateParams(taskParamsSchema), markTaskViewing)
 router.delete('/:id', validateParams(taskParamsSchema), deleteTask)
 
 export default router
